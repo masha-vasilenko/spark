@@ -1,0 +1,1034 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "\n",
+       "        <div>\n",
+       "            <p><b>SparkContext</b></p>\n",
+       "\n",
+       "            <p><a href=\"http://192.168.1.69:4040\">Spark UI</a></p>\n",
+       "\n",
+       "            <dl>\n",
+       "              <dt>Version</dt>\n",
+       "                <dd><code>v2.2.0</code></dd>\n",
+       "              <dt>Master</dt>\n",
+       "                <dd><code>local[*]</code></dd>\n",
+       "              <dt>AppName</dt>\n",
+       "                <dd><code>PySparkShell</code></dd>\n",
+       "            </dl>\n",
+       "        </div>\n",
+       "        "
+      ],
+      "text/plain": [
+       "<SparkContext master=local[*] appName=PySparkShell>"
+      ]
+     },
+     "execution_count": 1,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "sc"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "**flatmap** vs. **map** only affects how the data is collected."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Fold, Aggregate, countByValue, takeSample, and foreach(n)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Fold - similiar to a reduce function\n",
+    "**fold** is similar to reduce with a default value. \n",
+    "- takes function with same design as needed for reduce()\n",
+    "- Takes a default value to be used for the intial call on each partition\n",
+    "- Returns a new value of hte same type\n",
+    "\n",
+    "---\n",
+    "\n",
+    "If there's 3 partitions\n",
+    "\n",
+    "`.fold(0,lambda x,y : x+y)`\n",
+    "\n",
+    "Step 1 : **0** 1 3 5 | **0** 7 9 | **0**\n",
+    "\n",
+    "Step 2 : **0** 9 | **0** 16\n",
+    "\n",
+    "Step 3 :25\n",
+    "\n",
+    "---\n",
+    "\n",
+    "`.fold(1,lambda x,y : x+y)`\n",
+    "\n",
+    "If there's 3 partitions\n",
+    "\n",
+    "Step 1 : **1** 1 3 5 | **1** 7 9 | **1**\n",
+    "\n",
+    "Step 2 : **0** 9 | **0** 16\n",
+    "\n",
+    "Step 3 : 25\n",
+    "\n",
+    "Fold is often used for error handling. Handle error on your own. The 0 value will automatically handle the error. \n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Lets look at odd numbers, want to calculate (sum / count)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "odd_nums = sc.parallelize([1,3,5,7,9],2)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[1, 4, 5, 7, 9]"
+      ]
+     },
+     "execution_count": 3,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.map(lambda x : x+1 if x == 3 else x).collect()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[0, 4, 7, 0, 0]"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.map(lambda x : x+1 if x == 3 else x+2 if x==5 else 0).collect()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[1, 3, 5, 7, 9]"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.collect()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We will make a 2-value tuple `(0,0)` which will be considered as `x`.\n",
+    "\n",
+    "- `x[0]` will be our sum\n",
+    "- `x[1]` will be our count\n",
+    "\n",
+    "```python\n",
+    ".aggregate((0,0),  # default value\n",
+    "    lambda x,y : (x[0],x[1]+y),  # within a partition\n",
+    "    lambda x,y: (x[0]+y[0],x[1]+y[1])) # condensing partitions\n",
+    "```\n",
+    "\n",
+    "#### Lets look at the parts\n",
+    "\n",
+    "##### Default Value\n",
+    "Will default to (0,0) as a starting point. Then will continually add. \n",
+    "\n",
+    "##### Within partition \n",
+    "\n",
+    "`lambda x,y : (x[0]+1,x[1]+y)`\n",
+    "\n",
+    "Let's work through this. \n",
+    "\n",
+    "1. We start with `(0,0) = x`\n",
+    "2. We encounter our first value 1 so `y=1`\n",
+    "3. We want (0,0) to be => (1,1)\n",
+    "\n",
+    "\n",
+    "##### Gathering Partitions results\n",
+    "\n",
+    "`lambda x,y: (x[0]+y[0],x[1]+y[1]))`\n",
+    "\n",
+    "Let's work through this step by step. Lets say the partition break is `[1,3] [5,7,9]`\n",
+    "\n",
+    "Then after applying the function within the partition we should have `(4,2) (21,3)`\n",
+    "\n",
+    "So to reiterate:\n",
+    "\n",
+    "1. `(4,2) = x`\n",
+    "2. `(21,3) = y`\n",
+    "3. so the lambda function should add these pair-wise together\n",
+    "4. `x[0]+y[0] = 25`\n",
+    "5. `x[1]+y[1] = 5`\n",
+    "6. Returns `(25,5)`\n",
+    "\n",
+    "\n",
+    "\n",
+    "\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 4-1 for the numbers between 1 and 9 calculate sum of odd numbers"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "25"
+      ]
+     },
+     "execution_count": 6,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.reduce(lambda x,y : x + y)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 4-2 for the numbers between 1 and 9 calculate the sum of the odd numbers using fold"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "25"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.fold(0,lambda x,y : x + y)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 4-3 using aggregate () return (sum # of elements ) of odd numbers"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(5, 25)"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.aggregate((0,0),lambda x,y:(x[0]+1,+x[1]+y),lambda x,y:(x[0]+y[0],x[1]+y[1]))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[[1, 3], [5, 7, 9]]"
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.glom().collect()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Whats the difference between take() and first()?\n",
+    "\n",
+    "One returns values, the other returns a string"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "odd_nums = sc.parallelize([1,3,5,7,9],2)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[1]"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.take(1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "1"
+      ]
+     },
+     "execution_count": 12,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "odd_nums.first()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Whats the difference between sample() and takeSample()?\n",
+    "\n",
+    "\n",
+    "### Sample\n",
+    "Sample(withReplacement=True, fraction=0.5, seed=1) **transformation**\n",
+    "- **CREATES A NEW RDD** with random elements form the calling RDD\n",
+    "- with replacement (with repeats)\n",
+    "- fraction - expected positive\n",
+    "- expected probability element is used\n",
+    "- seed (for standardizing randomiztion) - otherwise default based on millisecond time\n",
+    "\n",
+    "### takeSample\n",
+    "takesSample (with replacement , num, seed) : ** action **\n",
+    "- returns fixed size sample subset of an RDD as an **ARRAY**\n",
+    "- with replacement allow sample multiple times\n",
+    "- num - example number of sampled element\n",
+    "- seed\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Example 5-1\n",
+    "\n",
+    "Try collect(), count(), countByValue(), top(n), take(n), first(), takeSample(), operations on Z"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "x = sc.parallelize([3,4,1,2])\n",
+    "y = sc.parallelize(range(2,6))\n",
+    "z = x.union(y)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[3, 4, 1, 2, 2, 3, 4, 5]"
+      ]
+     },
+     "execution_count": 14,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.collect()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "8"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.count()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "defaultdict(int, {1: 1, 2: 2, 3: 2, 4: 2, 5: 1})"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.countByValue()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[5, 4, 4]"
+      ]
+     },
+     "execution_count": 17,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.top(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[3, 4, 1]"
+      ]
+     },
+     "execution_count": 18,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.take(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "3"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.first()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[2, 1, 3]"
+      ]
+     },
+     "execution_count": 20,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.takeSample(withReplacement=False,num=3,seed=None)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[3, 2, 3, 2, 4, 3, 5, 2, 4, 1, 2, 4, 2, 4, 2, 3, 2, 2, 3, 4]"
+      ]
+     },
+     "execution_count": 21,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.takeSample(withReplacement=True,num=20,seed=None)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[[], [3], [], [4], [], [1], [], [2], [], [2], [], [3], [], [4], [], [5]]"
+      ]
+     },
+     "execution_count": 22,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "z.glom().collect()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[[], [], [], [], [], [], [], [], [], [2], [], [], [], [], [], [5]]"
+      ]
+     },
+     "execution_count": 23,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "res = z.sample(True,0.5)\n",
+    "res.glom().collect()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "b = z.foreach(lambda x : x+1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Week 3 - Pair RDDs\n",
+    "\n",
+    "Pair RDDs are a **key value pair**. \n",
+    "\n",
+    "|Key|value|\n",
+    "|---|------------------------------|\n",
+    "|001| 'some data that i have added'|\n",
+    "\n",
+    "Very common structure for schemaless data or NoSQL. In NoSQL - key is unique. Spark, key could be duplicated. Key could show up in multiple places\n",
+    "\n",
+    "#### Keys \n",
+    "Could be simple, or complex objects (tuples)\n",
+    "Could be simple, or a complex json"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Exercise 1 - get words from readme file"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "path = '/Users/owner/USF/spark/README.md'\n",
+    "readme = sc.textFile(path)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(u'#', 1),\n",
+       " (u'Apache', 1),\n",
+       " (u'Spark', 1),\n",
+       " (u'', 1),\n",
+       " (u'Spark', 1),\n",
+       " (u'is', 1),\n",
+       " (u'a', 1),\n",
+       " (u'fast', 1),\n",
+       " (u'and', 1),\n",
+       " (u'general', 1)]"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "words = readme.flatMap(lambda x: x.split(' '))\n",
+    "word_count = words.map(lambda x: (x,1))\n",
+    "word_count.collect()[:10]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Transformations designed for key value pairs\n",
+    "\n",
+    "|function | description |\n",
+    "|-----|------------------|\n",
+    "|keys()| gets the keys|\n",
+    "|values()| value|"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Do the same but do value as length of word and sort by value"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(115,\n",
+       "  u'[IntelliJ](https://cwiki.apache.org/confluence/display/SPARK/Useful+Developer+Tools#UsefulDeveloperTools-IntelliJ).'),\n",
+       " (112,\n",
+       "  u'[Eclipse](https://cwiki.apache.org/confluence/display/SPARK/Useful+Developer+Tools#UsefulDeveloperTools-Eclipse)'),\n",
+       " (96,\n",
+       "  u'Version\"](http://spark.apache.org/docs/latest/building-spark.html#specifying-the-hadoop-version)'),\n",
+       " (82,\n",
+       "  u'3\"](https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3).'),\n",
+       " (81,\n",
+       "  u'tests](https://cwiki.apache.org/confluence/display/SPARK/Useful+Developer+Tools).'),\n",
+       " (65, u'Spark\"](http://spark.apache.org/docs/latest/building-spark.html).'),\n",
+       " (62, u'Guide](http://spark.apache.org/docs/latest/configuration.html)'),\n",
+       " (57, u'wiki](https://cwiki.apache.org/confluence/display/SPARK).'),\n",
+       " (49, u'page](http://spark.apache.org/documentation.html)'),\n",
+       " (35, u'sc.parallelize(range(1000)).count()'),\n",
+       " (33, u'Maven](http://maven.apache.org/).'),\n",
+       " (26, u'<http://spark.apache.org/>'),\n",
+       " (24, u'MASTER=spark://host:7077'),\n",
+       " (24, u'Spark](#building-spark).'),\n",
+       " (18, u'`./bin/run-example'),\n",
+       " (17, u'./bin/spark-shell'),\n",
+       " (17, u'./bin/run-example'),\n",
+       " (17, u'./bin/run-example'),\n",
+       " (16, u'sc.parallelize(1'),\n",
+       " (16, u'Hadoop-supported')]"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "words = readme.flatMap(lambda x: x.split(' '))\n",
+    "word_len = words.map(lambda x: (len(x),x))\n",
+    "sorted_list = word_len.sortByKey(ascending=False)\n",
+    "sorted_list.collect()[:20]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "**groupByKey()**\n",
+    "\n",
+    "- group by key\n",
+    "- return an RDD  of (Key, ResultIterable)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 3 \n",
+    "\n",
+    "Create a pair RDD with (length of a word, list of words) from README.md"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 34,
+   "metadata": {
+    "scrolled": false
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(96, [u'Version\"](http://spark.apache.org/docs/latest/building-spark.html#specifying-the-hadoop-version)'])\n",
+      "----------------\n",
+      "(112, [u'[Eclipse](https://cwiki.apache.org/confluence/display/SPARK/Useful+Developer+Tools#UsefulDeveloperTools-Eclipse)'])\n",
+      "----------------\n",
+      "(2, [u'is', u'It', u'in', u'R,', u'an', u'It', u'of', u'##', u'on', u'##', u'is', u'To', u'do', u'to', u'do', u'if', u'by', u'-T', u'in', u'is', u'at', u'an', u'##', u'to', u'is', u'to', u'##', u'if', u'##', u'in', u'To', u'of', u'Pi', u'to', u'to', u'be', u'or', u'to', u'on', u'to', u'or', u'to', u'an', u'if', u'is', u'in', u'of', u'if', u'no', u'##', u'is', u'be', u'on', u'to', u'or', u'##', u'to', u'to', u'in', u'of', u'to', u'at', u'on', u'of', u'##', u'to', u'in', u'an', u'on', u'to'])\n",
+      "----------------\n",
+      "(4, [u'fast', u'APIs', u'that', u'data', u'also', u'rich', u'find', u'This', u'file', u'only', u'run:', u'(You', u'need', u'this', u'more', u'than', u'with', u'More', u'from', u'IDE,', u'also', u'also', u'with', u'will', u'when', u'This', u'URL,', u'with', u'with', u'also', u'name', u'Many', u'help', u'Once', u'[run', u'Note', u'uses', u'core', u'talk', u'HDFS', u'have', u'must', u'same', u'that', u'your', u'Hive', u'Hive'])\n",
+      "----------------\n",
+      "(6, [u'Apache', u'system', u'Scala,', u'engine', u'graphs', u'GraphX', u'stream', u'Online', u'latest', u'guide,', u'README', u'thread', u'option', u'Maven,', u'builds', u'shell:', u'should', u'return', u'scala>', u'Python', u'prefer', u'Python', u'shell:', u'should', u'return', u'sample', u'MASTER', u'submit', u'\"yarn\"', u'params', u'given.', u'built,', u'using:', u'Please', u'Hadoop', u'Hadoop', u'Please', u'Hadoop', u'Please', u'online', u'Spark.'])\n",
+      "----------------\n"
+     ]
+    }
+   ],
+   "source": [
+    "words = readme.flatMap(lambda x: x.split())\n",
+    "words = words.map(lambda x: (len(x),x))\n",
+    "res = words.groupByKey().map(lambda x: (x[0],list(x[1])))\n",
+    "res.sortByKey()\n",
+    "\n",
+    "\n",
+    "for x in res.collect()[:5]:\n",
+    "    print x[:2]\n",
+    "    print '----------------'\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### mapValues\n",
+    "\n",
+    "Pass each value in the key value pair RDD through a map function wihtout changing the keys"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 4"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 35,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(u'when', <pyspark.resultiterable.ResultIterable at 0x1039c2910>),\n",
+       " (u'R,', <pyspark.resultiterable.ResultIterable at 0x10391ed10>),\n",
+       " (u'including', <pyspark.resultiterable.ResultIterable at 0x10391e690>)]"
+      ]
+     },
+     "execution_count": 35,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "words = rdm.flatMap(lambda x: x.split())\n",
+    "words = words.map(lambda x: (x,1))\n",
+    "res = words.groupByKey()\n",
+    "res.collect()[:3]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 36,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(u'the', 22),\n",
+       " (u'Spark', 15),\n",
+       " (u'to', 14),\n",
+       " (u'for', 11),\n",
+       " (u'and', 11),\n",
+       " (u'##', 8),\n",
+       " (u'a', 8),\n",
+       " (u'run', 7),\n",
+       " (u'can', 7),\n",
+       " (u'is', 6)]"
+      ]
+     },
+     "execution_count": 36,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "res2 = res.mapValues(sum)\n",
+    "res2.sortBy(lambda x: x[1], ascending = False).collect()[:10]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### flatMapValues"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Example 5 - similiar to before, but using flatMapValues\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 48,
+   "metadata": {
+    "scrolled": false
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(1, [u'#']),\n",
+       " (6, [u'Apache']),\n",
+       " (5, [u'Spark']),\n",
+       " (5, [u'Spark']),\n",
+       " (2, [u'is']),\n",
+       " (1, [u'a']),\n",
+       " (4, [u'fast']),\n",
+       " (3, [u'and']),\n",
+       " (7, [u'general']),\n",
+       " (7, [u'cluster'])]"
+      ]
+     },
+     "execution_count": 48,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "words = rdm.flatMap(lambda x: x.split())\n",
+    "words = words.map(lambda x: (len(x),x))\n",
+    "words.mapValues(lambda x : list([x])).collect()[:10]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### reduceByKey\n",
+    "\n",
+    "similar to reduce ()\n",
+    "reuns in parallel reduce operations\n",
+    "\n",
+    "#### Example 6 - do the word counts - generate word / occurance again"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 49,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[(u'the', 22),\n",
+       " (u'Spark', 15),\n",
+       " (u'to', 14),\n",
+       " (u'for', 11),\n",
+       " (u'and', 11),\n",
+       " (u'##', 8),\n",
+       " (u'a', 8),\n",
+       " (u'run', 7),\n",
+       " (u'can', 7),\n",
+       " (u'is', 6)]"
+      ]
+     },
+     "execution_count": 49,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "words = rdm.flatMap(lambda x: x.split())\n",
+    "words = words.map(lambda x: (x,1))\n",
+    "res = words.reduceByKey(lambda x,y: x+y).sortBy(lambda x: x[1], ascending=False)\n",
+    "res.collect()[:10]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Which requires less shuffles?\n",
+    "\n",
+    "    .groupByKey().mapValues(lambda x : sum(x))\n",
+    "    - Sends all the values over first, then condenses 2nd with the mapValues\n",
+    "\n",
+    "    .reduceByKey(lambda x,y: x+y)\n",
+    "    - Does partition accumulation first, then send pair to be combined\n",
+    "    - FEWER SHUFFLES"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 2",
+   "language": "python",
+   "name": "python2"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 2
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython2",
+   "version": "2.7.13"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 1
+}
